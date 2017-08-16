@@ -1,79 +1,82 @@
-pragma solidity ^0.4.11   
-   
-contract owned {
+pragma solidity ^0.4.11;
+contract Remittance{
     address owner;
-    function owned() { 
-        owner = msg.sender; 
-    }
-    modifier onlyOwner {
-        require(msg.sender == owner);
-        _;
-    }
-}
-contract Remittance is owned {
+    uint deadLine;        
+    uint finaldeadLine;
     
-    event LogSend(address sender, uint amount);
-    event LogRec(address sender, uint amount);
+    mapping (bytes32 => remittance) remittances;
+    
+    event LogreClaim(address receiver, uint amount);
+    event LogSender(address sender, uint amount);
     event LogWithdraw(address receiver, uint amount);
-   
-    mapping (address => uint) balances;
-    address alice;
-    address bob;
-    address carol;
-//Constructor function 
-    function Remittance(){
-       // var owner=msg.sender;not needed as we already used OWNED
-        }
+    event LogClosed(bool closeflag);
     
-    function xfer(address add)  payable returns (bool success) {
-       require (add !=0);
-       var receiver=add;
-       var xferAmt=msg.value;
-       
-            if(msg.value<=0)revert();
-	  
-	        if   (msg.value>0){
-	            balances[msg.sender]-=msg.value;
-	            LogSend(msg.sender,msg.value);
-	            balances[receiver]=msg.value;
-	            LogRec(receiver,msg.value);
-	            return true;
-	        }
-	        else 
-	        {
-	            return false;
-	        }
+    function Remittance(uint endTime) {
+		owner=msg.sender;
+		deadLine=endTime;
     }
-    
-	
-	function withdrawfund(address rec, bytes32 Hpwd, bytes32 pwd1, bytes32 pwd2)  internal returns(bool success) {
-	   
-        var  unLock=sha3(pwd1,pwd2);
-        if(Hpwd==unLock)
-        {
-            //pwd1=0;//password set to 0 to avoid re-entry??
-            //pwd2=0;//password set to 0 to avoid re-entry??
-            
-            if(msg.value>0){
-             rec.transfer(msg.value);
-             LogWithdraw(rec,msg.value);
-             return true;
-            }
-        }
+	struct remittance{
+	    bytes32 pwd;
+	    uint startBalance;    //actual deposited  amount.
+	    uint outstandBalance; //current balance, after withdrawal.
+	    bool active;          //after final dedline and reclaim, contract will become  inactive.
     }
-
-	function kill() {
-        if (msg.sender == owner) {
-            selfdestruct(owner);
-        }
-    }
-
-
-//Call fallback function. Log the event,
-	function() payable {
-	    LogRec(msg.sender,msg.value);
-	    //Payable will take ether in fallback function 
-	    //Log will be used to check the ether sender
+     function sendEther(bytes32 passCode, uint timeLine, uint closeTime) payable  {
 	    
-	}
+	    if(msg.sender!=owner) revert();
+	    if(msg.value <= 0) revert();
+	    require(passCode!=0);
+	    require(timeLine!=0);
+	    remittances[sha3(msg.sender)].pwd=sha3(passCode);
+            remittances[sha3(msg.sender)].startBalance=msg.value;
+            remittances[sha3(msg.sender)].outstandBalance=msg.value;
+            remittances[sha3(msg.sender)].active=true;
+            deadLine=now+timeLine;
+            finaldeadLine=deadLine+closeTime;
+            LogSender(msg.sender,msg.value);
+    }
+	 
+    function withdrawal(uint pwd1,uint pwd2) payable returns (bool success){
+	    require (remittances[sha3(msg.sender)].active!=false);//active contract.
+	    require(pwd1!=0);
+	    require(pwd2!=0);
+	    require(msg.value>0);
+	    bytes32 storePwd=remittances[sha3(pwd1,pwd2)].pwd;
+	    if(storePwd!=sha3(pwd1,pwd2)) revert();
+	    
+	    if(deadLine >=now && remittances[sha3(pwd1,pwd2)].outstandBalance >= msg.value){
+	        remittances[sha3(pwd1,pwd2)].outstandBalance -= msg.value;
+	        msg.sender.transfer(msg.value);
+	        LogWithdraw(msg.sender,msg.value);
+	    }else{
+	        throw ;
+	    }
+    }
+	 
+    function reClaim() returns(uint remainEther){
+	    if (remittances[sha3(msg.sender)].active=false) revert();
+	    if(msg.sender != owner) revert();  
+	    if(now <deadLine ) revert();       //reclain allowed only after deadline.
+	    if(now >finaldeadLine) revert();   //after close times no reclaim allowed.
+	    if(remittances[sha3(msg.sender)].outstandBalance<=0) revert();
+	    
+	       uint reclaimfund=remittances[sha3(msg.sender)].outstandBalance;
+	       remittances[sha3(msg.sender)].outstandBalance=0;
+	       msg.sender.transfer(reclaimfund);
+	       LogreClaim(msg.sender, reclaimfund);
+	       reclaimfund=0;
+	            
+	    if (now>=finaldeadLine){
+	        remittances[sha3(msg.sender)].active=false;
+	        LogClosed(remittances[sha3(msg.sender)].active);
+	    }
+    }
+    function kill() {
+        	if (msg.sender == owner) {
+            	selfdestruct(owner);
+		}
+    }
+    function() {
+	    //log the details using event
+    }
 }
